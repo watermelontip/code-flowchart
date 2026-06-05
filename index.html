@@ -1,0 +1,881 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>代码转流程图 - Code to Flowchart</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#1a1b26;--bg2:#24283b;--bg3:#2f3348;--fg:#c0caf5;--fg2:#9aa5ce;
+  --accent:#7aa2f7;--accent2:#bb9af7;--green:#9ece6a;--red:#f7768e;
+  --orange:#ff9e64;--yellow:#e0af68;--cyan:#7dcfff;--border:#3b4261;
+  --editor-bg:#1e2030;--line-num:#3b4261;
+}
+html,body{height:100%;font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--fg)}
+.app{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+.toolbar{display:flex;align-items:center;gap:8px;padding:8px 16px;background:var(--bg2);border-bottom:1px solid var(--border);flex-wrap:wrap;min-height:48px}
+.toolbar h1{font-size:16px;font-weight:600;color:var(--accent);margin-right:12px;white-space:nowrap}
+.toolbar select,.toolbar button{background:var(--bg3);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:13px;cursor:pointer;transition:all .2s}
+.toolbar select:hover,.toolbar button:hover{border-color:var(--accent);background:var(--bg)}
+.toolbar button.active{background:var(--accent);color:var(--bg);border-color:var(--accent)}
+.toolbar .sep{width:1px;height:24px;background:var(--border);margin:0 4px}
+.main{display:flex;flex:1;overflow:hidden}
+.editor-panel{width:45%;display:flex;flex-direction:column;border-right:2px solid var(--border);min-width:300px}
+.editor-header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:12px;color:var(--fg2)}
+.code-area{position:relative;flex:1;overflow:auto}
+.line-numbers{position:absolute;left:0;top:0;width:48px;padding:12px 8px;text-align:right;font-family:'Cascadia Code','Fira Code','Consolas',monospace;font-size:13px;line-height:1.6;color:var(--line-num);background:var(--editor-bg);user-select:none;z-index:1;border-right:1px solid var(--border)}
+#codeInput{width:100%;height:100%;padding:12px 12px 12px 56px;font-family:'Cascadia Code','Fira Code','Consolas',monospace;font-size:13px;line-height:1.6;background:var(--editor-bg);color:var(--fg);border:none;outline:none;resize:none;tab-size:2;white-space:pre;overflow:auto}
+.preview-panel{flex:1;display:flex;flex-direction:column;overflow:hidden;min-width:300px}
+.preview-header{display:flex;align-items:center;justify-content:space-between;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:12px;color:var(--fg2)}
+.flowchart-container{flex:1;overflow:auto;background:var(--bg);position:relative;cursor:grab}
+.flowchart-container:active{cursor:grabbing}
+.flowchart-container svg{display:block;margin:auto}
+.zoom-controls{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--bg2);border-top:1px solid var(--border);font-size:12px;color:var(--fg2)}
+.zoom-controls button{width:28px;height:28px;display:flex;align-items:center;justify-content:center;background:var(--bg3);color:var(--fg);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:14px;padding:0}
+.zoom-controls button:hover{border-color:var(--accent)}
+.zoom-controls span{min-width:48px;text-align:center}
+.zoom-controls .slider{flex:1;max-width:200px;-webkit-appearance:none;height:4px;background:var(--border);border-radius:2px;outline:none}
+.zoom-controls .slider::-webkit-slider-thumb{-webkit-appearance:none;width:14px;height:14px;background:var(--accent);border-radius:50%;cursor:pointer}
+.status-bar{display:flex;align-items:center;justify-content:space-between;padding:4px 16px;background:var(--bg2);border-top:1px solid var(--border);font-size:11px;color:var(--fg2)}
+.empty-state{display:flex;flex-direction:column;align-items:center;justify-content:center;height:100%;color:var(--fg2);gap:12px}
+.empty-state svg{width:64px;height:64px;opacity:0.3}
+/* SVG Flowchart Styles */
+.fc-node{cursor:default}
+.fc-node text{font-family:'Segoe UI',system-ui,sans-serif;font-size:13px;fill:var(--fg)}
+.fc-arrow{stroke:var(--fg2);stroke-width:2;fill:none;marker-end:url(#arrowhead)}
+.fc-arrow-label{font-size:11px;fill:var(--cyan)}
+/* Responsive */
+@media(max-width:768px){
+  .main{flex-direction:column}
+  .editor-panel{width:100%;height:45%;border-right:none;border-bottom:2px solid var(--border)}
+  .preview-panel{height:55%}
+}
+/* Toast */
+.toast{position:fixed;bottom:60px;left:50%;transform:translateX(-50%);background:var(--green);color:var(--bg);padding:8px 20px;border-radius:8px;font-size:13px;font-weight:600;z-index:999;opacity:0;transition:opacity .3s;pointer-events:none}
+.toast.show{opacity:1}
+</style>
+</head>
+<body>
+<div class="app">
+  <!-- Toolbar -->
+  <div class="toolbar">
+    <h1>📊 代码转流程图</h1>
+    <select id="langSelect" title="编程语言">
+      <option value="python">Python</option>
+      <option value="javascript">JavaScript</option>
+      <option value="clike">C 语言</option>
+    </select>
+    <select id="sampleSelect" title="示例代码">
+      <option value="">-- 示例代码 --</option>
+      <option value="fibonacci">斐波那契数列</option>
+      <option value="bubbleSort">冒泡排序</option>
+      <option value="binarySearch">二分查找</option>
+      <option value="gcd">最大公约数</option>
+      <option value="factorial">阶乘计算</option>
+    </select>
+    <div class="sep"></div>
+    <button onclick="generateFlowchart()" title="生成流程图">▶ 生成流程图</button>
+    <div class="sep"></div>
+    <button onclick="exportSVG()" title="导出SVG">📥 导出SVG</button>
+    <button onclick="exportPNG()" title="导出PNG">🖼 导出PNG</button>
+  </div>
+
+  <!-- Main Content -->
+  <div class="main">
+    <div class="editor-panel">
+      <div class="editor-header">
+        <span>📝 代码编辑器</span>
+        <span id="lineInfo">行: 1, 列: 1</span>
+      </div>
+      <div class="code-area">
+        <div class="line-numbers" id="lineNumbers">1</div>
+        <textarea id="codeInput" spellcheck="false" placeholder="在此输入代码..."></textarea>
+      </div>
+    </div>
+    <div class="preview-panel">
+      <div class="preview-header">
+        <span>📐 流程图预览</span>
+        <span id="nodeCount">节点数: 0</span>
+      </div>
+      <div class="flowchart-container" id="flowchartContainer">
+        <div class="empty-state" id="emptyState">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M9 17H5a2 2 0 01-2-2V5a2 2 0 012-2h4m6 14h4a2 2 0 002-2V5a2 2 0 00-2-2h-4m-5 0v18"/></svg>
+          <div>点击「生成流程图」或输入代码后按 Ctrl+Enter</div>
+        </div>
+      </div>
+      <div class="zoom-controls">
+        <button onclick="zoomOut()">−</button>
+        <input type="range" class="slider" id="zoomSlider" min="20" max="300" value="100" oninput="setZoom(this.value)">
+        <button onclick="zoomIn()">+</button>
+        <span id="zoomLevel">100%</span>
+        <button onclick="resetZoom()" title="重置缩放">⟳</button>
+        <button onclick="fitToView()" title="适应视图">⊞</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Status Bar -->
+  <div class="status-bar">
+    <span id="statusText">就绪 - 输入代码后点击生成流程图</span>
+    <span>代码转流程图 v1.0 | 支持 Python / JavaScript / C</span>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+// ===== SAMPLE CODE =====
+const SAMPLES = {
+  fibonacci: {
+    python: `def fibonacci(n):
+    if n <= 1:
+        return n
+    a = 0
+    b = 1
+    for i in range(2, n + 1):
+        temp = a + b
+        a = b
+        b = temp
+    return b
+
+result = fibonacci(10)
+print(result)`,
+    javascript: `function fibonacci(n) {
+    if (n <= 1) {
+        return n;
+    }
+    let a = 0;
+    let b = 1;
+    for (let i = 2; i <= n; i++) {
+        let temp = a + b;
+        a = b;
+        b = temp;
+    }
+    return b;
+}
+
+let result = fibonacci(10);
+console.log(result);`,
+    clike: `int fibonacci(int n) {
+    if (n <= 1) {
+        return n;
+    }
+    int a = 0;
+    int b = 1;
+    for (int i = 2; i <= n; i++) {
+        int temp = a + b;
+        a = b;
+        b = temp;
+    }
+    return b;
+}
+
+int main() {
+    int result = fibonacci(10);
+    printf("%d", result);
+    return 0;
+}`
+  },
+  bubbleSort: {
+    python: `def bubble_sort(arr):
+    n = len(arr)
+    for i in range(n):
+        for j in range(0, n - i - 1):
+            if arr[j] > arr[j + 1]:
+                temp = arr[j]
+                arr[j] = arr[j + 1]
+                arr[j + 1] = temp
+    return arr
+
+data = [64, 34, 25, 12, 22]
+result = bubble_sort(data)
+print(result)`,
+    javascript: `function bubbleSort(arr) {
+    let n = arr.length;
+    for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n - i - 1; j++) {
+            if (arr[j] > arr[j + 1]) {
+                let temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+        }
+    }
+    return arr;
+}
+
+let data = [64, 34, 25, 12, 22];
+let result = bubbleSort(data);
+console.log(result);`,
+    clike: `void bubbleSort(int arr[], int n) {
+    for (int i = 0; i < n; i++) {
+        for (int j = 0; j < n - i - 1; j++) {
+            if (arr[j] > arr[j + 1]) {
+                int temp = arr[j];
+                arr[j] = arr[j + 1];
+                arr[j + 1] = temp;
+            }
+        }
+    }
+}
+
+int main() {
+    int data[] = {64, 34, 25, 12, 22};
+    int n = 5;
+    bubbleSort(data, n);
+    return 0;
+}`
+  },
+  binarySearch: {
+    python: `def binary_search(arr, target):
+    left = 0
+    right = len(arr) - 1
+    while left <= right:
+        mid = (left + right) // 2
+        if arr[mid] == target:
+            return mid
+        elif arr[mid] < target:
+            left = mid + 1
+        else:
+            right = mid - 1
+    return -1
+
+arr = [2, 3, 4, 10, 40]
+idx = binary_search(arr, 10)
+print(idx)`,
+    javascript: `function binarySearch(arr, target) {
+    let left = 0;
+    let right = arr.length - 1;
+    while (left <= right) {
+        let mid = Math.floor((left + right) / 2);
+        if (arr[mid] === target) {
+            return mid;
+        } else if (arr[mid] < target) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    return -1;
+}
+
+let arr = [2, 3, 4, 10, 40];
+let idx = binarySearch(arr, 10);
+console.log(idx);`,
+    clike: `int binarySearch(int arr[], int n, int target) {
+    int left = 0;
+    int right = n - 1;
+    while (left <= right) {
+        int mid = (left + right) / 2;
+        if (arr[mid] == target) {
+            return mid;
+        } else if (arr[mid] < target) {
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+    return -1;
+}
+
+int main() {
+    int arr[] = {2, 3, 4, 10, 40};
+    int idx = binarySearch(arr, 5, 10);
+    return 0;
+}`
+  },
+  gcd: {
+    python: `def gcd(a, b):
+    while b != 0:
+        temp = b
+        b = a % b
+        a = temp
+    return a
+
+result = gcd(48, 18)
+print(result)`,
+    javascript: `function gcd(a, b) {
+    while (b !== 0) {
+        let temp = b;
+        b = a % b;
+        a = temp;
+    }
+    return a;
+}
+
+let result = gcd(48, 18);
+console.log(result);`,
+    clike: `int gcd(int a, int b) {
+    while (b != 0) {
+        int temp = b;
+        b = a % b;
+        a = temp;
+    }
+    return a;
+}
+
+int main() {
+    int result = gcd(48, 18);
+    printf("%d", result);
+    return 0;
+}`
+  },
+  factorial: {
+    python: `def factorial(n):
+    if n <= 1:
+        return 1
+    result = 1
+    for i in range(2, n + 1):
+        result = result * i
+    return result
+
+n = 5
+result = factorial(n)
+print(result)`,
+    javascript: `function factorial(n) {
+    if (n <= 1) {
+        return 1;
+    }
+    let result = 1;
+    for (let i = 2; i <= n; i++) {
+        result = result * i;
+    }
+    return result;
+}
+
+let n = 5;
+let result = factorial(n);
+console.log(result);`,
+    clike: `int factorial(int n) {
+    if (n <= 1) {
+        return 1;
+    }
+    int result = 1;
+    for (int i = 2; i <= n; i++) {
+        result = result * i;
+    }
+    return result;
+}
+
+int main() {
+    int n = 5;
+    int result = factorial(n);
+    printf("%d", result);
+    return 0;
+}`
+  }
+};
+
+// ===== EDITOR =====
+const codeInput = document.getElementById('codeInput');
+const lineNumbers = document.getElementById('lineNumbers');
+
+function updateLineNumbers() {
+  const lines = codeInput.value.split('\n').length;
+  lineNumbers.innerHTML = Array.from({length: lines}, (_, i) => i + 1).join('<br>');
+  lineNumbers.style.height = codeInput.scrollHeight + 'px';
+}
+
+codeInput.addEventListener('input', updateLineNumbers);
+codeInput.addEventListener('scroll', () => { lineNumbers.scrollTop = codeInput.scrollTop; });
+codeInput.addEventListener('keydown', (e) => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    const s = codeInput.selectionStart;
+    const end = codeInput.selectionEnd;
+    codeInput.value = codeInput.value.substring(0, s) + '  ' + codeInput.value.substring(end);
+    codeInput.selectionStart = codeInput.selectionEnd = s + 2;
+    updateLineNumbers();
+  }
+  if (e.ctrlKey && e.key === 'Enter') {
+    e.preventDefault();
+    generateFlowchart();
+  }
+});
+
+codeInput.addEventListener('click', updateCursorPos);
+codeInput.addEventListener('keyup', updateCursorPos);
+
+function updateCursorPos() {
+  const val = codeInput.value.substring(0, codeInput.selectionStart);
+  const lines = val.split('\n');
+  document.getElementById('lineInfo').textContent = `行: ${lines.length}, 列: ${lines[lines.length-1].length + 1}`;
+}
+
+// ===== LANGUAGE & SAMPLES =====
+document.getElementById('langSelect').addEventListener('change', loadSample);
+document.getElementById('sampleSelect').addEventListener('change', loadSample);
+
+function loadSample() {
+  const sample = document.getElementById('sampleSelect').value;
+  const lang = document.getElementById('langSelect').value;
+  if (sample && SAMPLES[sample] && SAMPLES[sample][lang]) {
+    codeInput.value = SAMPLES[sample][lang];
+    updateLineNumbers();
+    generateFlowchart();
+  }
+}
+
+// ===== ZOOM =====
+let currentZoom = 100;
+const flowchartContainer = document.getElementById('flowchartContainer');
+
+function setZoom(val) {
+  currentZoom = parseInt(val);
+  document.getElementById('zoomSlider').value = currentZoom;
+  document.getElementById('zoomLevel').textContent = currentZoom + '%';
+  const svg = flowchartContainer.querySelector('svg');
+  if (svg) svg.style.transform = `scale(${currentZoom/100})`;
+}
+function zoomIn() { setZoom(Math.min(300, currentZoom + 10)); }
+function zoomOut() { setZoom(Math.max(20, currentZoom - 10)); }
+function resetZoom() { setZoom(100); }
+function fitToView() {
+  const svg = flowchartContainer.querySelector('svg');
+  if (!svg) return;
+  const cw = flowchartContainer.clientWidth;
+  const ch = flowchartContainer.clientHeight;
+  const sw = svg.getAttribute('width') || svg.getBoundingClientRect().width / (currentZoom/100);
+  const sh = svg.getAttribute('height') || svg.getBoundingClientRect().height / (currentZoom/100);
+  const scale = Math.min((cw - 40) / sw, (ch - 40) / sh, 2) * 100;
+  setZoom(Math.round(scale));
+}
+
+// Pan support
+let isPanning = false, panStart = {x:0,y:0}, scrollStart = {x:0,y:0};
+flowchartContainer.addEventListener('mousedown', (e) => {
+  if (e.target.closest('.fc-node')) return;
+  isPanning = true; panStart = {x:e.clientX, y:e.clientY};
+  scrollStart = {x:flowchartContainer.scrollLeft, y:flowchartContainer.scrollTop};
+});
+window.addEventListener('mousemove', (e) => {
+  if (!isPanning) return;
+  flowchartContainer.scrollLeft = scrollStart.x - (e.clientX - panStart.x);
+  flowchartContainer.scrollTop = scrollStart.y - (e.clientY - panStart.y);
+});
+window.addEventListener('mouseup', () => isPanning = false);
+
+flowchartContainer.addEventListener('wheel', (e) => {
+  if (e.ctrlKey) {
+    e.preventDefault();
+    setZoom(currentZoom + (e.deltaY > 0 ? -5 : 5));
+  }
+}, {passive: false});
+
+// ===== CODE PARSER =====
+function parseCode(code, lang) {
+  const lines = code.split('\n');
+  const nodes = [];
+  let nodeId = 0;
+
+  function addNode(type, text, indent) {
+    nodes.push({ id: 'n' + (nodeId++), type, text: text.trim(), indent, children: [], elseChildren: [] });
+  }
+
+  // Clean lines
+  const cleaned = [];
+  for (let line of lines) {
+    let l = line.replace(/\/\/.*$/, '').replace(/#.*$/, '').trim();
+    if (!l) continue;
+    // Remove trailing {
+    if (l.endsWith('{')) l = l.slice(0, -1).trim();
+    if (l === '}') { cleaned.push({type:'close'}); continue; }
+    if (l === '} else {') { cleaned.push({type:'else'}); continue; }
+    if (l === '} else {') { cleaned.push({type:'else'}); continue; }
+    if (/^else\s*\{?$/.test(l)) { cleaned.push({type:'else'}); continue; }
+    cleaned.push({type:'code', text: l, indent: line.search(/\S/)});
+  }
+
+  // Parse into node tree
+  const stack = [{children: nodes, elseChildren: null}];
+  const elseMap = new Map();
+
+  for (let i = 0; i < cleaned.length; i++) {
+    const cl = cleaned[i];
+    if (cl.type === 'close') {
+      if (stack.length > 1) stack.pop();
+      continue;
+    }
+    if (cl.type === 'else') {
+      // Next block belongs to else of last decision
+      const parent = stack[stack.length - 1];
+      if (parent._lastDecision) {
+        stack.push({children: parent._lastDecision.elseChildren, isElse: true, _lastDecision: null});
+      }
+      continue;
+    }
+
+    const text = cl.text;
+    const parent = stack[stack.length - 1];
+    let node = null;
+
+    // Detect node type
+    if (/^(def |function |int |void |float |double |string |bool |let |var |const )/.test(text) && /[({]?\s*$/.test(text)) {
+      // Function
+      let fname = text.replace(/:\s*$/, '').replace(/\{?\s*$/, '');
+      node = { id: 'n' + (nodeId++), type: 'start', text: fname, indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+      stack.push({children: node.children, _lastDecision: null});
+    }
+    else if (/^(if |if\()/.test(text) || /^(elif |else if |} else if)/.test(text)) {
+      let cond = text.replace(/^if\s*\(?/, '').replace(/\)?\s*:?\s*$/, '').replace(/^(elif |else if )/, '').replace(/:\s*$/, '');
+      node = { id: 'n' + (nodeId++), type: 'decision', text: cond, indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+      if (parent) parent._lastDecision = node;
+      stack.push({children: node.children, _lastDecision: null});
+    }
+    else if (/^while /.test(text) || /^while\(/.test(text)) {
+      let cond = text.replace(/^while\s*\(?/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
+      node = { id: 'n' + (nodeId++), type: 'loop', text: 'while: ' + cond, indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+      stack.push({children: node.children, _lastDecision: null});
+    }
+    else if (/^for /.test(text) || /^for\(/.test(text)) {
+      let cond = text.replace(/^for\s*\(?/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
+      node = { id: 'n' + (nodeId++), type: 'loop', text: 'for: ' + cond, indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+      stack.push({children: node.children, _lastDecision: null});
+    }
+    else if (/^(print|printf|console\.log|cout|echo|scanf|scanf|input|read)/.test(text)) {
+      node = { id: 'n' + (nodeId++), type: 'io', text: text.replace(/;$/, ''), indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+    }
+    else if (/^return /.test(text) || text === 'return') {
+      node = { id: 'n' + (nodeId++), type: 'return', text: text.replace(/;$/, ''), indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+    }
+    else if (/^(break|continue)$/.test(text.replace(';', ''))) {
+      node = { id: 'n' + (nodeId++), type: 'process', text: text.replace(/;$/, ''), indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+    }
+    else {
+      // Process
+      node = { id: 'n' + (nodeId++), type: 'process', text: text.replace(/;$/, ''), indent: cl.indent, children: [], elseChildren: [] };
+      parent.children.push(node);
+    }
+  }
+
+  // Add end node
+  const endNode = { id: 'n' + (nodeId++), type: 'end', text: '结束', indent: 0, children: [], elseChildren: [] };
+  nodes.push(endNode);
+
+  return nodes;
+}
+
+// ===== FLOWCHART LAYOUT & RENDER =====
+const NODE_W = 180;
+const NODE_H = 50;
+const NODE_PAD_X = 40;
+const NODE_PAD_Y = 60;
+const DIAMOND_W = 180;
+const DIAMOND_H = 70;
+
+function measureText(text, maxW) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  ctx.font = '13px "Segoe UI", system-ui, sans-serif';
+  if (text.length > 30) {
+    return { w: Math.min(maxW || NODE_W, 180), h: 50 };
+  }
+  const w = Math.max(100, Math.min(maxW || NODE_W, ctx.measureText(text).width + 40));
+  return { w, h: NODE_H };
+}
+
+function layoutTree(nodes, x, y, results) {
+  let curY = y;
+  for (const node of nodes) {
+    const isDecision = node.type === 'decision' || node.type === 'loop';
+    const w = isDecision ? DIAMOND_W : NODE_W;
+    const h = isDecision ? DIAMOND_H : NODE_H;
+
+    node.x = x;
+    node.y = curY;
+    node.w = w;
+    node.h = h;
+    results.push(node);
+
+    if (isDecision) {
+      // Yes branch (children) - goes right
+      if (node.children.length > 0) {
+        layoutTree(node.children, x + w + NODE_PAD_X, curY, results);
+      }
+      // No / else branch - goes down
+      curY += h + NODE_PAD_Y;
+      if (node.elseChildren.length > 0) {
+        layoutTree(node.elseChildren, x, curY, results);
+        // skip past else children
+        const minY = getMaxY(node.elseChildren);
+        curY = Math.max(curY, minY) + NODE_PAD_Y;
+      }
+    } else if (node.type === 'start' && node.children.length > 0) {
+      curY += h + NODE_PAD_Y;
+      layoutTree(node.children, x, curY, results);
+      curY = getMaxY(node.children) + NODE_PAD_Y;
+    } else {
+      curY += h + NODE_PAD_Y;
+    }
+  }
+  return curY;
+}
+
+function getMaxY(nodes) {
+  let maxY = 0;
+  for (const n of nodes) {
+    const bottom = (n.y || 0) + (n.h || NODE_H);
+    if (bottom > maxY) maxY = bottom;
+    if (n.children) {
+      const childMaxY = getMaxY(n.children);
+      if (childMaxY > maxY) maxY = childMaxY;
+    }
+    if (n.elseChildren) {
+      const elseMaxY = getMaxY(n.elseChildren);
+      if (elseMaxY > maxY) maxY = elseMaxY;
+    }
+  }
+  return maxY;
+}
+
+function getMaxX(nodes) {
+  let maxX = 0;
+  for (const n of nodes) {
+    const right = (n.x || 0) + (n.w || NODE_W);
+    if (right > maxX) maxX = right;
+    if (n.children) {
+      const childMaxX = getMaxX(n.children);
+      if (childMaxX > maxX) maxX = childMaxX;
+    }
+    if (n.elseChildren) {
+      const elseMaxX = getMaxX(n.elseChildren);
+      if (elseMaxX > maxX) maxX = elseMaxX;
+    }
+  }
+  return maxX;
+}
+
+function generateSVG(allNodes) {
+  if (allNodes.length === 0) return '<svg></svg>';
+
+  const pad = 60;
+  // Calculate bounds
+  let maxX = 0, maxY = 0;
+  for (const n of allNodes) {
+    maxX = Math.max(maxX, n.x + n.w);
+    maxY = Math.max(maxY, n.y + n.h);
+  }
+  const svgW = maxX + pad * 2;
+  const svgH = maxY + pad * 2;
+
+  // Offset all nodes
+  for (const n of allNodes) {
+    n.x += pad;
+    n.y += pad;
+  }
+
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${svgW}" height="${svgH}" viewBox="0 0 ${svgW} ${svgH}" style="background:var(--bg)">`;
+  svg += `<defs>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#9aa5ce"/>
+    </marker>
+    <style>
+      .fc-start-end{fill:#7aa2f7;stroke:#89b4fa;stroke-width:1.5}
+      .fc-process{fill:#3b4261;stroke:#7aa2f7;stroke-width:1.5}
+      .fc-decision{fill:#3b4261;stroke:#e0af68;stroke-width:1.5}
+      .fc-loop{fill:#3b4261;stroke:#f7768e;stroke-width:1.5}
+      .fc-io{fill:#3b4261;stroke:#9ece6a;stroke-width:1.5}
+      .fc-return{fill:#3b4261;stroke:#bb9af7;stroke-width:1.5}
+      .fc-text{font-family:'Segoe UI',system-ui,sans-serif;font-size:12px;fill:#c0caf5;text-anchor:middle;dominant-baseline:central}
+      .fc-text-sm{font-size:11px;fill:#7dcfff;text-anchor:middle}
+      .fc-arrow{stroke:#7aa2f7;stroke-width:2;fill:none;marker-end:url(#arrowhead)}
+    </style>
+  </defs>`;
+
+  // Draw arrows first
+  for (const node of allNodes) {
+    if (node.children && node.children.length > 0) {
+      const child = node.children[0];
+      const cx = node.x + node.w / 2;
+      const cy = node.y + node.h;
+      const ccx = child.x + child.w / 2;
+      const ccy = child.y;
+      
+      if (node.type === 'decision' || node.type === 'loop') {
+        // Right arrow (yes)
+        const rx = node.x + node.w;
+        const ry = node.y + node.h / 2;
+        svg += `<path class="fc-arrow" d="M${rx},${ry} L${ccx},${ry} L${ccx},${ccy}"/>`;
+        svg += `<text class="fc-text-sm" x="${rx + 12}" y="${ry - 8}">是</text>`;
+      } else {
+        svg += `<path class="fc-arrow" d="M${cx},${cy} L${ccx},${ccy}"/>`;
+      }
+    }
+    if (node.elseChildren && node.elseChildren.length > 0) {
+      const child = node.elseChildren[0];
+      const cx = node.x + node.w / 2;
+      const cy = node.y + node.h;
+      const ccx = child.x + child.w / 2;
+      const ccy = child.y;
+      svg += `<path class="fc-arrow" d="M${cx},${cy} L${cx},${ccy - 5} L${ccx},${ccy - 5} L${ccx},${ccy}"/>`;
+      svg += `<text class="fc-text-sm" x="${cx + 8}" y="${cy + 16}">否</text>`;
+    }
+  }
+
+  // Draw connecting arrows between sequential siblings
+  for (let i = 0; i < allNodes.length - 1; i++) {
+    const node = allNodes[i];
+    const next = allNodes[i + 1];
+    // If no children and next is at same x level, draw arrow
+    if (!node.children?.length && node.type !== 'decision' && node.type !== 'loop') {
+      if (next.x === node.x && next.y > node.y + node.h) {
+        // Sequential
+      }
+    }
+  }
+
+  // Draw nodes
+  for (const node of allNodes) {
+    const cx = node.x + node.w / 2;
+    const cy = node.y + node.h / 2;
+    
+    switch (node.type) {
+      case 'start':
+      case 'end':
+        svg += `<rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="25" ry="25" class="fc-start-end"/>`;
+        break;
+      case 'process':
+        svg += `<rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="4" ry="4" class="fc-process"/>`;
+        break;
+      case 'decision':
+      case 'loop':
+        const dx = node.x, dy = node.y, dw = node.w, dh = node.h;
+        svg += `<polygon points="${cx},${dy} ${dx+dw},${cy} ${cx},${dy+dh} ${dx},${cy}" class="fc-decision"/>`;
+        break;
+      case 'io':
+        const skew = 15;
+        svg += `<polygon points="${node.x+skew},${node.y} ${node.x+node.w},${node.y} ${node.x+node.w-skew},${node.y+node.h} ${node.x},${node.y+node.h}" class="fc-io"/>`;
+        break;
+      case 'return':
+        svg += `<rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="4" ry="4" class="fc-return"/>`;
+        break;
+      default:
+        svg += `<rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="4" ry="4" class="fc-process"/>`;
+    }
+    
+    // Text with wrapping
+    const label = node.text || '';
+    const maxChars = 20;
+    if (label.length > maxChars) {
+      const parts = [];
+      for (let i = 0; i < label.length; i += maxChars) {
+        parts.push(label.substring(i, i + maxChars));
+      }
+      parts.forEach((p, i) => {
+        const ty = cy - (parts.length - 1) * 8 + i * 16;
+        svg += `<text class="fc-text" x="${cx}" y="${ty}">${escHtml(p)}</text>`;
+      });
+    } else {
+      svg += `<text class="fc-text" x="${cx}" y="${cy}">${escHtml(label)}</text>`;
+    }
+  }
+
+  svg += '</svg>';
+  return svg;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+// ===== MAIN GENERATE =====
+function generateFlowchart() {
+  const code = codeInput.value.trim();
+  if (!code) { showToast('请输入代码！'); return; }
+  
+  const lang = document.getElementById('langSelect').value;
+  setStatus('正在解析代码...');
+  
+  try {
+    const nodes = parseCode(code, lang);
+    if (nodes.length === 0) { showToast('未检测到有效代码结构'); return; }
+    
+    // Layout
+    layoutTree(nodes, 20, 20, []);
+    
+    // Count
+    document.getElementById('nodeCount').textContent = '节点数: ' + nodes.length;
+    document.getElementById('emptyState').style.display = 'none';
+    
+    // Generate SVG
+    const svgStr = generateSVG(nodes);
+    flowchartContainer.innerHTML = svgStr;
+    
+    // Fit to view
+    setTimeout(() => fitToView(), 100);
+    
+    setStatus(`流程图已生成 - ${nodes.length} 个节点`);
+  } catch (e) {
+    setStatus('解析错误: ' + e.message);
+    showToast('解析失败: ' + e.message);
+  }
+}
+
+// ===== EXPORT =====
+function exportSVG() {
+  const svg = flowchartContainer.querySelector('svg');
+  if (!svg) { showToast('请先生成流程图'); return; }
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const blob = new Blob([svgData], {type: 'image/svg+xml'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = 'flowchart.svg'; a.click();
+  URL.revokeObjectURL(url);
+  showToast('SVG 已导出！');
+}
+
+function exportPNG() {
+  const svg = flowchartContainer.querySelector('svg');
+  if (!svg) { showToast('请先生成流程图'); return; }
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const canvas = document.createElement('canvas');
+  const w = parseInt(svg.getAttribute('width')) || 800;
+  const h = parseInt(svg.getAttribute('height')) || 600;
+  const scale = 2;
+  canvas.width = w * scale;
+  canvas.height = h * scale;
+  const ctx = canvas.getContext('2d');
+  ctx.scale(scale, scale);
+  const img = new Image();
+  img.onload = () => {
+    ctx.fillStyle = '#1a1b26';
+    ctx.fillRect(0, 0, w, h);
+    ctx.drawImage(img, 0, 0, w, h);
+    canvas.toBlob(blob => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'flowchart.png'; a.click();
+      URL.revokeObjectURL(url);
+      showToast('PNG 已导出！');
+    }, 'image/png');
+  };
+  img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+}
+
+// ===== UTILS =====
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  setTimeout(() => t.classList.remove('show'), 2000);
+}
+function setStatus(msg) {
+  document.getElementById('statusText').textContent = msg;
+}
+
+// Init
+updateLineNumbers();
+codeInput.value = SAMPLES.fibonacci.python;
+document.getElementById('sampleSelect').value = 'fibonacci';
+updateLineNumbers();
+setTimeout(generateFlowchart, 200);
+</script>
+</body>
+</html>
