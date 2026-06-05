@@ -467,6 +467,7 @@ function parseCode(code, lang) {
   const lines = code.split('\n');
   const nodes = [];
   let nodeId = 0;
+  const isPython = (lang === 'python');
 
   function addNode(type, text, indent) {
     nodes.push({ id: 'n' + (nodeId++), type, text: text.trim(), indent, children: [], elseChildren: [] });
@@ -475,68 +476,104 @@ function parseCode(code, lang) {
   // Clean lines
   const cleaned = [];
   for (let line of lines) {
-    let l = line.replace(/\/\/.*$/, '').replace(/#.*$/, '').trim();
-    if (!l) continue;
-    // Remove trailing {
-    if (l.endsWith('{')) l = l.slice(0, -1).trim();
-    if (l === '}') { cleaned.push({type:'close'}); continue; }
-    if (l === '} else {') { cleaned.push({type:'else'}); continue; }
-    if (l === '} else {') { cleaned.push({type:'else'}); continue; }
-    if (/^else\s*\{?$/.test(l)) { cleaned.push({type:'else'}); continue; }
-    cleaned.push({type:'code', text: l, indent: line.search(/\S/)});
+    let l;
+    if (isPython) {
+      // Python: only strip # comments not inside strings
+      l = line.replace(/#(?=(?:[^"']*["'][^"']*["'])*[^"']*$)/, '').trimEnd();
+    } else {
+      l = line.replace(/\/\/.*$/, '').replace(/#.*$/, '').trim();
+    }
+    if (!l.trim()) continue;
+    const indent = line.search(/\S/);
+    l = l.trim();
+
+    if (!isPython) {
+      // JS/C style: use braces for blocks
+      if (l.endsWith('{')) l = l.slice(0, -1).trim();
+      if (l === '}') { cleaned.push({type:'close'}); continue; }
+      if (l === '} else {') { cleaned.push({type:'else'}); continue; }
+      if (/^else\s*\{?$/.test(l)) { cleaned.push({type:'else'}); continue; }
+    }
+    cleaned.push({type:'code', text: l, indent});
   }
 
   // Parse into node tree
-  const stack = [{children: nodes, elseChildren: null}];
-  const elseMap = new Map();
+  const stack = [{children: nodes, elseChildren: null, indent: -1}];
 
   for (let i = 0; i < cleaned.length; i++) {
     const cl = cleaned[i];
-    if (cl.type === 'close') {
+
+    if (!isPython && cl.type === 'close') {
       if (stack.length > 1) stack.pop();
       continue;
     }
-    if (cl.type === 'else') {
-      // Next block belongs to else of last decision
-      const parent = stack[stack.length - 1];
-      if (parent._lastDecision) {
-        stack.push({children: parent._lastDecision.elseChildren, isElse: true, _lastDecision: null});
+
+    // Python: handle indentation-based blocks
+    if (isPython) {
+      // Pop stack when indent decreases
+      while (stack.length > 1 && cl.indent <= stack[stack.length - 1].indent && stack[stack.length - 1].indent >= 0) {
+        stack.pop();
       }
-      continue;
     }
 
     const text = cl.text;
     const parent = stack[stack.length - 1];
     let node = null;
 
+    // Handle else/elif for Python
+    if (isPython && /^elif\s/.test(text)) {
+      let cond = text.replace(/^elif\s*/, '').replace(/:\s*$/, '');
+      // Pop back to the if's parent
+      while (stack.length > 1 && !stack[stack.length - 1]._isIfBlock) {
+        stack.pop();
+      }
+      const ifParent = stack[stack.length - 1];
+      if (ifParent._lastDecision) {
+        node = { id: 'n' + (nodeId++), type: 'decision', text: 'elif: ' + cond, indent: cl.indent, children: [], elseChildren: [] };
+        ifParent._lastDecision.elseChildren.push(node);
+        ifParent._lastDecision = node;
+        stack.push({children: node.children, _lastDecision: null, indent: cl.indent, _isIfBlock: true});
+      }
+      continue;
+    }
+    if (isPython && /^else\s*:?\s*$/.test(text)) {
+      while (stack.length > 1 && !stack[stack.length - 1]._isIfBlock) {
+        stack.pop();
+      }
+      const ifParent = stack[stack.length - 1];
+      if (ifParent._lastDecision) {
+        stack.push({children: ifParent._lastDecision.elseChildren, _lastDecision: null, indent: cl.indent});
+      }
+      continue;
+    }
+
     // Detect node type
     if (/^(def |function |int |void |float |double |string |bool |let |var |const )/.test(text) && /[({]?\s*$/.test(text)) {
-      // Function
       let fname = text.replace(/:\s*$/, '').replace(/\{?\s*$/, '');
       node = { id: 'n' + (nodeId++), type: 'start', text: fname, indent: cl.indent, children: [], elseChildren: [] };
       parent.children.push(node);
-      stack.push({children: node.children, _lastDecision: null});
+      stack.push({children: node.children, _lastDecision: null, indent: cl.indent});
     }
-    else if (/^(if |if\()/.test(text) || /^(elif |else if |} else if)/.test(text)) {
-      let cond = text.replace(/^if\s*\(?/, '').replace(/\)?\s*:?\s*$/, '').replace(/^(elif |else if )/, '').replace(/:\s*$/, '');
+    else if (/^(if |if\()/.test(text)) {
+      let cond = text.replace(/^if\s*\(?\s*/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
       node = { id: 'n' + (nodeId++), type: 'decision', text: cond, indent: cl.indent, children: [], elseChildren: [] };
       parent.children.push(node);
-      if (parent) parent._lastDecision = node;
-      stack.push({children: node.children, _lastDecision: null});
+      parent._lastDecision = node;
+      stack.push({children: node.children, _lastDecision: null, indent: cl.indent, _isIfBlock: true});
     }
     else if (/^while /.test(text) || /^while\(/.test(text)) {
-      let cond = text.replace(/^while\s*\(?/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
+      let cond = text.replace(/^while\s*\(?\s*/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
       node = { id: 'n' + (nodeId++), type: 'loop', text: 'while: ' + cond, indent: cl.indent, children: [], elseChildren: [] };
       parent.children.push(node);
-      stack.push({children: node.children, _lastDecision: null});
+      stack.push({children: node.children, _lastDecision: null, indent: cl.indent});
     }
     else if (/^for /.test(text) || /^for\(/.test(text)) {
-      let cond = text.replace(/^for\s*\(?/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
+      let cond = text.replace(/^for\s*\(?\s*/, '').replace(/\)?\s*:?\s*$/, '').replace(/:\s*$/, '');
       node = { id: 'n' + (nodeId++), type: 'loop', text: 'for: ' + cond, indent: cl.indent, children: [], elseChildren: [] };
       parent.children.push(node);
-      stack.push({children: node.children, _lastDecision: null});
+      stack.push({children: node.children, _lastDecision: null, indent: cl.indent});
     }
-    else if (/^(print|printf|console\.log|cout|echo|scanf|scanf|input|read)/.test(text)) {
+    else if (/^(print|printf|console\.log|cout|echo|scanf|input|read)\s*\(/.test(text)) {
       node = { id: 'n' + (nodeId++), type: 'io', text: text.replace(/;$/, ''), indent: cl.indent, children: [], elseChildren: [] };
       parent.children.push(node);
     }
@@ -549,7 +586,6 @@ function parseCode(code, lang) {
       parent.children.push(node);
     }
     else {
-      // Process
       node = { id: 'n' + (nodeId++), type: 'process', text: text.replace(/;$/, ''), indent: cl.indent, children: [], elseChildren: [] };
       parent.children.push(node);
     }
@@ -802,7 +838,8 @@ function generateFlowchart() {
     
     // Count
     document.getElementById('nodeCount').textContent = '节点数: ' + nodes.length;
-    document.getElementById('emptyState').style.display = 'none';
+    const emptyState = document.getElementById('emptyState');
+    if (emptyState) emptyState.style.display = 'none';
     
     // Generate SVG
     const svgStr = generateSVG(nodes);
